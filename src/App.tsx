@@ -135,7 +135,7 @@ interface Assignment {
   spotCliente?: string;
   spotRef?: string;
   cliente: string;
-  estado: "PENDIENTE" | "COMPLETADA" | "ANULADA";
+  estado: string;
   items: OrderItem[];
   status?: AssignmentStatus;
   statusHistory?: { at: string; status: AssignmentStatus }[];
