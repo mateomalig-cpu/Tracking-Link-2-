@@ -1269,17 +1269,17 @@ export default function App() {
     )
       return;
 
-    const nowIso = new Date().toISOString();
-
-    // Nuevo: si vuelve a haber cajas, reactivamos el lote y limpiamos fechaCierre
+    // si vuelve a haber cajas, reactivamos el lote y limpiamos fechaCierre
     const newInventory = inventory.map((r) => {
       const toReturn = asg.items
         .filter((it) => it.inventoryId === r.id)
         .reduce((s, it) => s + it.cajas, 0);
       if (!toReturn) return r;
+
       const newCajasInv = r.cajasInv + toReturn;
       const stillActive = newCajasInv > 0;
       const fechaCierre = stillActive ? undefined : r.fechaCierre;
+
       return {
         ...r,
         cajasInv: newCajasInv,
