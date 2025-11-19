@@ -191,6 +191,7 @@ interface Assignment {
 
 type StoredAssignment = Omit<Assignment, "items"> & { items?: OrderItem[] };
 type CombinedTrackingLink = { token: string; inventoryIds: string[]; cliente: string; createdAt: string };
+type InventoryFormPayload = Omit<InventoryRow, "totalLbs" | "cajasInv" | "activo" | "clientes" | "statusHistory" | "trackingToken" | "fechaCierre"> & { cajasDisponibles: number; id?: string };
 
 const sanitizeAssignment = (data: StoredAssignment): Assignment => ({
   ...data,
@@ -400,6 +401,7 @@ export default function App() {
   const [showAssignmentForm, setShowAssignmentForm] = useState(false);
   const [assignmentMode, setAssignmentMode] = useState<AssignmentTipo>("ORDEN");
   const [showNewPOForm, setShowNewPOForm] = useState(false);
+  const [editingInventoryRow, setEditingInventoryRow] = useState<InventoryRow | null>(null);
   const [showArchivedAssignments, setShowArchivedAssignments] = useState(false);
   const [showNewSOForm, setShowNewSOForm] = useState(false);
 
@@ -524,20 +526,18 @@ export default function App() {
     setShowNewSOForm(false);
   };
 
-  const handleCreateNewPO = (data: Omit<InventoryRow, 'id' | 'totalLbs' | 'cajasInv' | 'activo' | 'clientes' | 'statusHistory' | 'trackingToken' | 'fechaCierre'> & { cajasDisponibles?: number }) => {
+  const handleCreateNewPO = (data: InventoryFormPayload) => {
     const now = new Date().toISOString();
-    const { cajasDisponibles, ...rest } = data;
-    const cajasInv = typeof cajasDisponibles === "number" && !Number.isNaN(cajasDisponibles) ? cajasDisponibles : rest.cajasOrden;
     const newPO: InventoryRow = {
-      ...rest,
+      ...data,
       id: `row-${uid()}`,
-      customId: rest.customId || "",
-      cajasInv,
-      totalLbs: cajasInv * rest.formatoCaja,
-      clientes: [rest.clientePrincipal],
-      activo: true,
+      customId: data.customId || "",
+      cajasInv: data.cajasDisponibles,
+      totalLbs: data.cajasDisponibles * data.formatoCaja,
+      clientes: [data.clientePrincipal],
+      activo: data.cajasDisponibles > 0,
       trackingToken: uid(),
-      statusHistory: [{ at: now, status: rest.status }],
+      statusHistory: [{ at: now, status: data.status }],
     };
     setInventory(prev => {
       const nextState = [newPO, ...prev];
@@ -545,6 +545,29 @@ export default function App() {
       return nextState;
     });
     setShowNewPOForm(false);
+  };
+
+  const handleUpdatePO = (data: InventoryFormPayload) => {
+    if (!data.id) return;
+    setInventory(prev => {
+      const nextState = prev.map(row => {
+        if (row.id !== data.id) return row;
+        const statusHistory = data.status !== row.status ? [...row.statusHistory, { at: new Date().toISOString(), status: data.status }] : row.statusHistory;
+        return {
+          ...row,
+          ...data,
+          cajasInv: data.cajasDisponibles,
+          cajasOrden: data.cajasOrden,
+          totalLbs: data.cajasDisponibles * data.formatoCaja,
+          clientes: [data.clientePrincipal],
+          activo: data.cajasDisponibles > 0,
+          statusHistory,
+        };
+      });
+      saveInventoryToStorage(nextState);
+      return nextState;
+    });
+    setEditingInventoryRow(null);
   };
   
   const handleUpdateInventoryStatus = (rowId: string, newStatus: TrackingStatus) => {
@@ -669,17 +692,18 @@ export default function App() {
         </header>
         <main className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-8">
           {tab === "dashboard" && ( <DashboardView kpis={kpis} agg={dashboardAgg} /> )}
-          {tab === "inventory" && ( <InventoryView rows={filteredInventory} onNewPO={() => setShowNewPOForm(true)} /> )}
+          {tab === "inventory" && ( <InventoryView rows={filteredInventory} onNewPO={() => setShowNewPOForm(true)} onEdit={setEditingInventoryRow} /> )}
           {tab === "warehouse" && ( <WarehouseView inventory={inventory.filter(r => r.activo)} /> )}
           {tab === "assignments" && ( <AssignmentsView assignments={assignments} salesOrders={salesOrders} onToggleState={handleToggleAssignmentState} onNewAssignmentOrden={() => { setAssignmentMode("ORDEN"); setShowAssignmentForm(true); }} onNewAssignmentSpot={() => { setAssignmentMode("SPOT"); setShowAssignmentForm(true); }} showArchived={showArchivedAssignments} onToggleArchived={() => setShowArchivedAssignments(prev => !prev)} /> )}
-          {tab === "clientUpdate" && ( <ClientUpdateView inventory={inventory.filter(r => r.activo)} onStatusChange={handleUpdateInventoryStatus} onSendEmail={sendTrackingEmail} onCreateCombinedLink={handleCreateCombinedTrackingLink} /> )}
+          {tab === "clientUpdate" && ( <ClientUpdateView inventory={inventory} onStatusChange={handleUpdateInventoryStatus} onSendEmail={sendTrackingEmail} onCreateCombinedLink={handleCreateCombinedTrackingLink} /> )}
           {tab === 'orders' && <SalesOrdersView orders={salesOrders} onNewOrder={() => setShowNewSOForm(true)} />}
           {tab === "categories" && <CategoriesView summary={categorySummary} />}
         </main>
       </div>
 
       {showAssignmentForm && <AssignmentForm mode={assignmentMode} inventory={inventory.filter(r => r.activo && r.cajasInv > 0)} salesOrders={salesOrders} onCreate={handleCreateAssignment} onCancel={() => setShowAssignmentForm(false)} />}
-      {showNewPOForm && <NewPOForm onCreate={handleCreateNewPO} onCancel={() => setShowNewPOForm(false)} />}
+      {showNewPOForm && <NewPOForm mode="create" onSubmit={handleCreateNewPO} onCancel={() => setShowNewPOForm(false)} />}
+      {editingInventoryRow && <NewPOForm mode="edit" initialData={editingInventoryRow} onSubmit={handleUpdatePO} onCancel={() => setEditingInventoryRow(null)} />}
       {showNewSOForm && <NewSalesOrderForm onCreate={handleCreateNewSalesOrder} onCancel={() => setShowNewSOForm(false)} />}
     </>
   );
@@ -772,7 +796,7 @@ function DashboardView({ kpis, agg }: { kpis: { totalCajasInv: number; totalAssi
   );
 }
 
-function InventoryView({ rows, onNewPO }: { rows: InventoryRow[]; onNewPO: () => void; }) {
+function InventoryView({ rows, onNewPO, onEdit }: { rows: InventoryRow[]; onNewPO: () => void; onEdit: (row: InventoryRow) => void; }) {
   return (
     <div className="bg-white shadow-sm border border-[#D7D2CB]">
       <div className="p-6 border-b border-[#D7D2CB] flex items-center justify-between">
@@ -804,6 +828,7 @@ function InventoryView({ rows, onNewPO }: { rows: InventoryRow[]; onNewPO: () =>
               <th className="px-4 text-right">Cases Available</th>
               <th className="px-4 text-right">Format (lb)</th>
               <th className="px-4 text-right">Total Lbs</th>
+              <th className="px-4 text-right">Edit</th>
             </tr>
           </thead>
           <tbody className="font-['Merriweather']">
@@ -833,6 +858,9 @@ function InventoryView({ rows, onNewPO }: { rows: InventoryRow[]; onNewPO: () =>
                   <td className="px-4 text-right font-bold text-[#425563]">{r.cajasInv.toLocaleString()}</td>
                   <td className="px-4 text-right">{r.formatoCaja.toLocaleString()}</td>
                   <td className="px-4 text-right font-bold text-[#425563]">{availableLbs.toLocaleString()}</td>
+                  <td className="px-4 text-right">
+                    <button onClick={() => onEdit(r)} className="text-[#FE5000] font-bold text-[10px] uppercase hover:underline">Edit</button>
+                  </td>
                 </tr>
               );
             })}
@@ -877,6 +905,9 @@ function InventoryView({ rows, onNewPO }: { rows: InventoryRow[]; onNewPO: () =>
                 <div>{r.material}</div>
                 <div className="font-bold uppercase mt-2">Description</div>
                 <div>{r.descripcion}</div>
+              </div>
+              <div className="flex justify-end">
+                <button onClick={() => onEdit(r)} className="text-[#FE5000] font-bold text-[11px] uppercase hover:underline">Edit</button>
               </div>
             </div>
           );
@@ -1213,39 +1244,109 @@ function SalesOrdersView({ orders, onNewOrder }: { orders: SalesOrder[], onNewOr
   );
 }
 
-function NewPOForm({ onCreate, onCancel }: { onCreate: (data: Omit<InventoryRow, 'id' | 'totalLbs' | 'cajasInv' | 'activo' | 'clientes' | 'statusHistory' | 'trackingToken' | 'fechaCierre'> & { cajasDisponibles?: number }) => void; onCancel: () => void; }) {
+type InventoryFormState = {
+  customId: string;
+  po: string;
+  customerPO: string;
+  material: string;
+  descripcion: string;
+  producto: string;
+  clientePrincipal: string;
+  ubicacion: string;
+  bodega: string;
+  planta: string;
+  produccion: string;
+  eta: string;
+  status: TrackingStatus;
+  cajasOrden: string;
+  formatoCaja: string;
+  cajasDisponibles: string;
+  sector: string;
+  trim: string;
+  size: string;
+  escamas: string;
+  awb: string;
+  time: string;
+  empacado: string;
+};
+
+function NewPOForm({ mode, initialData, onSubmit, onCancel }: { mode: "create" | "edit"; initialData?: InventoryRow; onSubmit: (data: InventoryFormPayload) => void; onCancel: () => void; }) {
   const warehouses = [ { name: "SUC", location: "Miami, FL" }, { name: "EVO LAX", location: "Los Angeles, CA" }, { name: "EVO DFW", location: "Dallas, TX" }, { name: "CARTYS", location: "New York, NY" }, { name: "CARTYS-RFD", location: "Rockford, IL" }, { name: "SFO-CENTRA FREIGHT", location: "San Francisco, CA" }, { name: "ARAHO", location: "Boston, MA" }, { name: "PRIME", location: "Los Angeles, CA" }, { name: "RFD-Direct", location: "Rockford, IL" }, ];
   const productTypes = ["Filetes", "Hon"];
   const productDescriptions = [ "HON 14-16 55", "R TD 2-3 10", "R TD 2-3 35", "R TD 3-4 10", "R TD 2-4 35", "R TD 3-4 SE 35", "R TD 4-5 35", "R TE 2-3 35", "R TE 3-4 35", "R TF 2-5 35", "SG TD 3-4 35", "SG TD Pr 3-4 35", "SG TD Pr 4-5 35", "TD 2-3 10", "TD 2-3 35", "TD 2-3 SE 10", "TD 2-3 SE 35", "TD 3-4 10", "TD 3-4 35", "TD 3-4 SE 10", "TD 3-4 SE 35", "TE 2-3 35", "TE 3-4 35", "TF 2-5 35" ];
+  const isEditing = mode === "edit";
 
-  const [formData, setFormData] = useState({
-    customId: "",
-    po: "",
-    customerPO: "",
-    material: "",
-    descripcion: productDescriptions[0],
-    producto: "",
-    clientePrincipal: "",
-    ubicacion: warehouses[0].location,
-    bodega: warehouses[0].name,
-    planta: "Magallanes",
-    produccion: new Date().toISOString().slice(0, 10),
-    eta: new Date().toISOString().slice(0, 10),
-    status: "CONFIRMADO" as TrackingStatus,
-    cajasOrden: 100,
-    formatoCaja: 35,
-    cajasDisponibles: "",
-    sector: "SA",
-    trim: "TD",
-    size: "4-5",
-    escamas: "",
-    awb: "",
-    time: "AM",
-    empacado: productTypes[0],
-  });
+  const buildInitialState = (row?: InventoryRow): InventoryFormState => {
+    if (!row) {
+      return {
+        customId: "",
+        po: "",
+        customerPO: "",
+        material: "",
+        descripcion: productDescriptions[0],
+        producto: "",
+        clientePrincipal: "",
+        ubicacion: warehouses[0].location,
+        bodega: warehouses[0].name,
+        planta: "Magallanes",
+        produccion: new Date().toISOString().slice(0, 10),
+        eta: new Date().toISOString().slice(0, 10),
+        status: "CONFIRMADO",
+        cajasOrden: "100",
+        formatoCaja: "35",
+        cajasDisponibles: "",
+        sector: "SA",
+        trim: "TD",
+        size: "4-5",
+        escamas: "",
+        awb: "",
+        time: "AM",
+        empacado: productTypes[0],
+      };
+    }
+    return {
+      customId: row.customId || "",
+      po: row.po,
+      customerPO: row.customerPO,
+      material: row.material,
+      descripcion: row.descripcion,
+      producto: row.producto,
+      clientePrincipal: row.clientePrincipal,
+      ubicacion: row.ubicacion,
+      bodega: row.bodega,
+      planta: row.planta,
+      produccion: row.produccion,
+      eta: row.eta,
+      status: row.status,
+      cajasOrden: String(row.cajasOrden),
+      formatoCaja: String(row.formatoCaja),
+      cajasDisponibles: String(row.cajasInv),
+      sector: row.sector,
+      trim: row.trim,
+      size: row.size,
+      escamas: row.escamas ?? "",
+      awb: row.awb ?? "",
+      time: row.time,
+      empacado: row.empacado,
+    };
+  };
 
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => { setFormData(prev => ({ ...prev, [e.target.name]: e.target.value })); };
-  const handleWarehouseChange = (e: React.ChangeEvent<HTMLSelectElement>) => { const selected = warehouses.find(w => w.name === e.target.value); if (selected) setFormData(prev => ({ ...prev, bodega: selected.name, ubicacion: selected.location })); };
+  const [formData, setFormData] = useState<InventoryFormState>(() => buildInitialState(initialData));
+
+  useEffect(() => {
+    setFormData(buildInitialState(initialData));
+  }, [initialData, mode]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const handleWarehouseChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const selected = warehouses.find(w => w.name === e.target.value);
+    if (selected) setFormData(prev => ({ ...prev, bodega: selected.name, ubicacion: selected.location }));
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.customId || !formData.po || !formData.material) return;
@@ -1253,14 +1354,31 @@ function NewPOForm({ onCreate, onCancel }: { onCreate: (data: Omit<InventoryRow,
     const formatoCaja = Number(formData.formatoCaja) || 0;
     const cajasDisponiblesValue = formData.cajasDisponibles === "" ? cajasOrden : Number(formData.cajasDisponibles);
     const cajasDisponibles = Number.isFinite(cajasDisponiblesValue) ? cajasDisponiblesValue : cajasOrden;
-    const { cajasDisponibles: _omit, ...base } = formData;
-    onCreate({
-      ...base,
+    onSubmit({
+      id: initialData?.id,
+      customId: formData.customId,
+      po: formData.po,
+      customerPO: formData.customerPO,
+      material: formData.material,
+      descripcion: formData.descripcion,
+      producto: formData.producto,
+      clientePrincipal: formData.clientePrincipal,
+      ubicacion: formData.ubicacion,
+      bodega: formData.bodega,
+      planta: formData.planta,
+      produccion: formData.produccion,
+      eta: formData.eta,
+      status: formData.status,
       cajasOrden,
       formatoCaja,
-      awb: base.awb || null,
-      escamas: base.escamas || null,
       cajasDisponibles,
+      sector: formData.sector,
+      trim: formData.trim,
+      size: formData.size,
+      escamas: formData.escamas ? formData.escamas : null,
+      awb: formData.awb ? formData.awb : null,
+      time: formData.time,
+      empacado: formData.empacado,
     });
   };
 
@@ -1268,7 +1386,7 @@ function NewPOForm({ onCreate, onCancel }: { onCreate: (data: Omit<InventoryRow,
     <div className="fixed inset-0 bg-[#425563]/80 flex items-center justify-center z-50 p-4">
       <form onSubmit={handleSubmit} className="bg-white shadow-2xl max-w-3xl w-full p-8 max-h-[90vh] overflow-y-auto border-t-8 border-[#FE5000]">
         <div className="flex items-center justify-between pb-4 border-b border-[#D7D2CB] mb-6">
-          <h2 className="text-xl font-bold text-[#425563] font-['Quicksand']">NUEVO LOTE DE INVENTARIO</h2>
+          <h2 className="text-xl font-bold text-[#425563] font-['Quicksand']">{isEditing ? "EDITAR LOTE DE INVENTARIO" : "NUEVO LOTE DE INVENTARIO"}</h2>
           <button type="button" onClick={onCancel} className="text-[#6E6259] hover:text-[#FE5000]"><X className="h-6 w-6" /></button>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 text-sm text-[#6E6259]">
@@ -1310,7 +1428,7 @@ function NewPOForm({ onCreate, onCancel }: { onCreate: (data: Omit<InventoryRow,
         </div>
         <div className="flex justify-end gap-4 pt-6 border-t border-[#D7D2CB] mt-6">
           <button type="button" onClick={onCancel} className="text-[#6E6259] font-bold uppercase text-xs hover:text-[#425563]">Cancelar</button>
-          <button type="submit" className="btn-primary px-6 py-2 text-xs font-bold uppercase rounded-none">Guardar Lote</button>
+          <button type="submit" className="btn-primary px-6 py-2 text-xs font-bold uppercase rounded-none">{isEditing ? "Actualizar Lote" : "Guardar Lote"}</button>
         </div>
       </form>
     </div>
@@ -1323,8 +1441,9 @@ function NewSalesOrderForm({ onCreate, onCancel }: { onCreate: (data: Omit<Sales
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => { setFormData(prev => ({ ...prev, [e.target.name]: e.target.value })); };
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.demandId || !formData.shipTo || !formData.orden) return;
-    onCreate({ ...formData, cases: Number(formData.cases) || 0, price: Number(formData.price) || 0 });
+    if (!formData.demandId || !formData.shipTo) return;
+    const payload = { ...formData, orden: formData.orden || "", cases: Number(formData.cases) || 0, price: Number(formData.price) || 0 };
+    onCreate(payload);
   };
 
   return (
