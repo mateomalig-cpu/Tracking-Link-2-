@@ -196,6 +196,9 @@ const sanitizeAssignment = (data: StoredAssignment): Assignment => ({
   items: Array.isArray(data.items) ? data.items : [],
 });
 
+const getAssignmentItems = (assignment: Pick<Assignment, "items">) =>
+  Array.isArray(assignment.items) ? assignment.items : [];
+
 type DashboardAgg = {
   byWarehouse: { bodega: string; totalCajas: number; totalLbs: number }[];
   byStatus: { status: string; cajas: number }[];
@@ -294,7 +297,11 @@ function loadInventoryFromStorage(): InventoryRow[] {
   if (typeof window === "undefined") return sampleInventoryData;
   try {
     const raw = window.localStorage.getItem(INVENTORY_LS_KEY);
-    return raw ? (JSON.parse(raw) as InventoryRow[]) : sampleInventoryData;
+    if (!raw) {
+      window.localStorage.setItem(INVENTORY_LS_KEY, JSON.stringify(sampleInventoryData));
+      return sampleInventoryData;
+    }
+    return JSON.parse(raw) as InventoryRow[];
   } catch { return sampleInventoryData; }
 }
 
@@ -309,7 +316,13 @@ function loadAssignmentsFromStorage(): Assignment[] {
   if (typeof window === "undefined") return [];
   try {
     const raw = window.localStorage.getItem(ASSIGNMENTS_LS_KEY);
-    return raw ? (JSON.parse(raw) as StoredAssignment[]).map(sanitizeAssignment) : [];
+    if (!raw) {
+      window.localStorage.setItem(ASSIGNMENTS_LS_KEY, JSON.stringify([]));
+      return [];
+    }
+    const sanitized = (JSON.parse(raw) as StoredAssignment[]).filter(Boolean).map(sanitizeAssignment);
+    window.localStorage.setItem(ASSIGNMENTS_LS_KEY, JSON.stringify(sanitized));
+    return sanitized;
   } catch { return []; }
 }
 
@@ -324,10 +337,12 @@ function loadSalesOrdersFromStorage(): SalesOrder[] {
   if (typeof window === "undefined") return sampleSalesOrders;
   try {
     const raw = window.localStorage.getItem(SALES_ORDERS_LS_KEY);
-    return raw ? (JSON.parse(raw) as SalesOrder[]) : sampleSalesOrders;
-  } catch {
-    return sampleSalesOrders;
-  }
+    if (!raw) {
+      window.localStorage.setItem(SALES_ORDERS_LS_KEY, JSON.stringify(sampleSalesOrders));
+      return sampleSalesOrders;
+    }
+    return JSON.parse(raw) as SalesOrder[];
+  } catch { return sampleSalesOrders; }
 }
 
 function saveSalesOrdersToStorage(list: SalesOrder[]) {
@@ -370,7 +385,7 @@ export default function App() {
     const storedSalesOrders = loadSalesOrdersFromStorage();
     const invRow = storedInventory.find(i => i.trackingToken === token);
     if (invRow) {
-      const relatedAssignments = storedAssignments.filter(a => a.items.some(it => it.inventoryId === invRow.id));
+      const relatedAssignments = storedAssignments.filter(a => getAssignmentItems(a).some(it => it.inventoryId === invRow.id));
       const relatedSalesOrder = storedSalesOrders.find(so => so.customerPO === invRow.customerPO); 
       return <ClientTrackingView inventoryRow={invRow} assignments={relatedAssignments} salesOrder={relatedSalesOrder} salesOrders={storedSalesOrders} />;
     }
@@ -536,7 +551,7 @@ export default function App() {
       if (!window.confirm("¿Anular esta asignación y devolver stock?")) return;
       setInventory(prevInv => {
         const nextState = prevInv.map(r => {
-          const returnedItem = asg.items.find(it => it.inventoryId === r.id);
+          const returnedItem = getAssignmentItems(asg).find(it => it.inventoryId === r.id);
           if (!returnedItem) return r;
           return { ...r, cajasInv: r.cajasInv + returnedItem.cajas, activo: true };
         });
@@ -544,11 +559,11 @@ export default function App() {
         return nextState;
       });
     } else {
-      const hasStock = asg.items.every(item => { const invItem = inventory.find(i => i.id === item.inventoryId); return invItem && invItem.cajasInv >= item.cajas; });
+      const hasStock = getAssignmentItems(asg).every(item => { const invItem = inventory.find(i => i.id === item.inventoryId); return invItem && invItem.cajasInv >= item.cajas; });
       if (!hasStock) { alert("Stock insuficiente para reactivar."); return; }
       setInventory(prevInv => {
         const nextState = prevInv.map(r => {
-          const assignedItem = asg.items.find(it => it.inventoryId === r.id);
+        const assignedItem = getAssignmentItems(asg).find(it => it.inventoryId === r.id);
           if (!assignedItem) return r;
           return { ...r, cajasInv: r.cajasInv - assignedItem.cajas };
         });
@@ -886,7 +901,8 @@ function CategoriesView({ summary }: { summary: { key: string; sector: string; t
 }
 
 function AssignmentsView({ assignments, salesOrders, onToggleState, onNewAssignmentOrden, onNewAssignmentSpot, showArchived, onToggleArchived, }: { assignments: Assignment[]; salesOrders: SalesOrder[]; onToggleState: (id: string, to: AssignmentEstado) => void; onNewAssignmentOrden: () => void; onNewAssignmentSpot: () => void; showArchived: boolean; onToggleArchived: () => void; }) {
-  const filteredAssignments = assignments.filter(a => showArchived ? a.estado === 'ANULADA' : a.estado === 'ACTIVA');
+  const safeAssignments = assignments.filter((a): a is Assignment => Boolean(a && a.id));
+  const filteredAssignments = safeAssignments.filter(a => showArchived ? a.estado === 'ANULADA' : a.estado === 'ACTIVA');
   return (
     <div className="bg-white shadow-sm border border-[#D7D2CB]">
       <div className="p-6 border-b border-[#D7D2CB] flex items-center justify-between flex-wrap gap-4">
@@ -902,7 +918,7 @@ function AssignmentsView({ assignments, salesOrders, onToggleState, onNewAssignm
           <thead><tr className="table-header"><th className="py-3 px-4 text-left">ID</th><th className="px-4 text-left">Fecha</th><th className="px-4 text-left">Tipo</th><th className="px-4 text-left">Cliente</th><th className="px-4 text-left">Ref</th><th className="px-4 text-right">Cajas</th><th className="px-4 text-right">Acción</th></tr></thead>
           <tbody className="font-['Merriweather']">
             {filteredAssignments.map(asg => {
-              const assignmentItems = Array.isArray(asg.items) ? asg.items : [];
+              const assignmentItems = getAssignmentItems(asg);
               const cajas = assignmentItems.reduce((s, it) => s + it.cajas, 0);
               const ref = asg.tipo === 'ORDEN' ? (salesOrders.find(s => s.id === asg.salesOrderId)?.demandId ?? asg.salesOrderId) : asg.spotRef;
               return (
@@ -919,28 +935,40 @@ function AssignmentsView({ assignments, salesOrders, onToggleState, onNewAssignm
         </table>
       </div>
       <div className="sm:hidden p-4 space-y-4 bg-[#F9F8F6] border-t border-[#D7D2CB]">
-        {inventory.map(r => (
-          <div key={r.id} className="bg-white border border-[#E5DED5] shadow-sm p-4 space-y-3">
-            <div className="flex justify-between items-start">
-              <div>
-                <div className="text-[10px] uppercase text-[#6E6259] font-bold">PO</div>
-                <div className="text-base font-bold text-[#425563]">{r.po}</div>
-                <div className="text-xs text-[#6E6259]">{r.clientePrincipal}</div>
+        {filteredAssignments.map(asg => {
+          const assignmentItems = getAssignmentItems(asg);
+          const cajas = assignmentItems.reduce((s, it) => s + it.cajas, 0);
+          const ref = asg.tipo === "ORDEN" ? (salesOrders.find(s => s.id === asg.salesOrderId)?.demandId ?? asg.salesOrderId) : asg.spotRef;
+          return (
+            <div key={asg.id} className="bg-white border border-[#E5DED5] shadow-sm p-4 space-y-3">
+              <div className="flex justify-between items-start">
+                <div>
+                  <div className="text-[10px] uppercase text-[#6E6259] font-bold">Allocation</div>
+                  <div className="text-base font-bold text-[#425563]">{asg.id}</div>
+                  <div className="text-xs text-[#6E6259]">{asg.fecha}</div>
+                </div>
+                <Badge text={asg.tipo} />
               </div>
-              <Badge text={r.status} />
+              <div className="text-[11px] text-[#6E6259] space-y-1">
+                <div><span className="font-bold uppercase">Client:</span> {asg.cliente}</div>
+                <div><span className="font-bold uppercase">Reference:</span> {ref || "—"}</div>
+                <div><span className="font-bold uppercase">Cases:</span> <strong className="text-[#425563]">{cajas.toLocaleString()}</strong></div>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                {showArchived ? (
+                  <button onClick={() => onToggleState(asg.id, "ACTIVA")} className="btn-secondary flex-1 text-[10px] font-bold uppercase py-2">
+                    <Undo className="h-3 w-3 inline mr-1" /> Reactivar
+                  </button>
+                ) : (
+                  <button onClick={() => onToggleState(asg.id, "ANULADA")} className="btn-primary flex-1 text-[10px] font-bold uppercase py-2 bg-red-600 hover:bg-red-700">
+                    <X className="h-3 w-3 inline mr-1" /> Anular
+                  </button>
+                )}
+              </div>
             </div>
-            <div className="text-[11px] text-[#6E6259] space-y-1">
-              <div><span className="font-bold uppercase">Tracking:</span> <a href={getTrackingLink(r)} target="_blank" rel="noreferrer" className="text-[#FE5000] font-bold">View Link</a></div>
-              <div><span className="font-bold uppercase">ETA:</span> {r.eta}</div>
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <select value={r.status} onChange={e => onStatusChange(r.id, e.target.value as TrackingStatus)} className="input-brand flex-1 px-2 py-1 text-[10px] uppercase">
-                {statusOptions.map(s => <option key={s} value={s}>{STATUS_LABELS[s]}</option>)}
-              </select>
-              <button onClick={() => onSendEmail(r.id)} className="btn-primary px-3 py-2 text-[10px] font-bold uppercase">Email</button>
-            </div>
-          </div>
-        ))}
+          );
+        })}
+        {filteredAssignments.length === 0 && <div className="text-center text-[#B4AAA1] italic text-sm">Sin asignaciones.</div>}
       </div>
     </div>
   );
@@ -1377,7 +1405,7 @@ function ClientTrackingView({ inventoryRow, assignments, salesOrder, salesOrders
   const orderMap = useMemo(() => new Map(salesOrders.map(order => [order.id, order])), [salesOrders]);
 
   const assignedItemDetails = assignments.flatMap(asg =>
-    asg.items
+    getAssignmentItems(asg)
       .filter(item => item.inventoryId === inventoryRow.id)
       .map(item => {
         const linkedOrder = asg.salesOrderId ? orderMap.get(asg.salesOrderId) : undefined;
