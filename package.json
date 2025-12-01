@@ -2,8 +2,12 @@
   "name": "my-app",
   "version": "0.0.0",
   "scripts": {
-    // CAMBIA ESTA LÍNEA
-    "build": "npx vite build" 
+    "build": "npx vite build", 
+    "dev": "vite",
+    "preview": "vite preview"
   },
-  // ... el resto de tus dependencias
+  "dependencies": {
+    // ...
+  },
+  // ... el resto del archivo debe ser JSON válido
 }
