@@ -1051,7 +1051,16 @@ export default function App() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ token, inventory, salesOrders, assignments }),
-        }).catch(() => null)
+        })
+          .then(async res => {
+            if (!res.ok) {
+              const body = await res.text();
+              console.error(`[persistTrackingSnapshot] Failed (${res.status}): ${body}`);
+            }
+          })
+          .catch(err => {
+            console.error("[persistTrackingSnapshot] Network error:", err);
+          })
       )
     );
   }, [assignments, inventory, isTrackingRoute, salesOrders]);
@@ -1320,14 +1329,17 @@ function TrackingRouter({ token }: { token: string }) {
 
   useEffect(() => {
     let cancelled = false;
-        const fetchSnapshot = async () => {
-          try {
-            const res = await fetch(`${TRACKING_API_BASE}/get-tracking?token=${encodeURIComponent(token)}`);
-            if (res.status === 404) {
-              if (!cancelled) setState({ loading: false, notFound: true });
-              return;
-            }
-            if (!res.ok) throw new Error(`Fetch failed with ${res.status}`);
+    const fetchSnapshot = async () => {
+      try {
+        const res = await fetch(`${TRACKING_API_BASE}/get-tracking?token=${encodeURIComponent(token)}`);
+        if (res.status === 404) {
+          if (!cancelled) setState({ loading: false, notFound: true });
+          return;
+        }
+        if (!res.ok) {
+          const body = await res.text();
+          throw new Error(`Fetch failed with ${res.status}: ${body}`);
+        }
         const json = await res.json();
         if (cancelled) return;
         setState({
@@ -1338,7 +1350,8 @@ function TrackingRouter({ token }: { token: string }) {
             salesOrders: json.sales_orders || json.salesOrders || [],
           },
         });
-      } catch {
+      } catch (err) {
+        console.error("[TrackingRouter] Fetch error for token", token, err);
         if (!cancelled) setState({ loading: false, notFound: true });
       }
     };

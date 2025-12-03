@@ -1,5 +1,12 @@
 const { neon } = require("@netlify/neon");
 
+const headers = {
+  "Content-Type": "application/json",
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
 const ensureTable = async (sql) => {
   await sql`
     CREATE TABLE IF NOT EXISTS trackings (
@@ -14,17 +21,21 @@ const ensureTable = async (sql) => {
 };
 
 exports.handler = async (event) => {
+  if (event.httpMethod === "OPTIONS") {
+    return { statusCode: 200, headers, body: "" };
+  }
+
   if (event.httpMethod !== "GET") {
-    return { statusCode: 405, body: JSON.stringify({ error: "method not allowed" }) };
+    return { statusCode: 405, headers, body: JSON.stringify({ error: "method not allowed" }) };
   }
 
   if (!process.env.NETLIFY_DATABASE_URL) {
-    return { statusCode: 500, body: JSON.stringify({ error: "database not configured" }) };
+    return { statusCode: 500, headers, body: JSON.stringify({ error: "database not configured" }) };
   }
 
   const token = event.queryStringParameters?.token;
   if (!token) {
-    return { statusCode: 400, body: JSON.stringify({ error: "token is required" }) };
+    return { statusCode: 400, headers, body: JSON.stringify({ error: "token is required" }) };
   }
 
   const sql = neon(process.env.NETLIFY_DATABASE_URL);
@@ -38,24 +49,12 @@ exports.handler = async (event) => {
       LIMIT 1
     `;
     if (!rows || rows.length === 0) {
-      return {
-        statusCode: 404,
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ error: "not found" }),
-      };
+      return { statusCode: 404, headers, body: JSON.stringify({ error: "not found" }) };
     }
     const row = rows[0];
-    return {
-      statusCode: 200,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(row),
-    };
+    return { statusCode: 200, headers, body: JSON.stringify(row) };
   } catch (err) {
     console.error("get-tracking error", err);
-    return {
-      statusCode: 500,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ error: "failed to fetch tracking" }),
-    };
+    return { statusCode: 500, headers, body: JSON.stringify({ error: "failed to fetch tracking" }) };
   }
 };

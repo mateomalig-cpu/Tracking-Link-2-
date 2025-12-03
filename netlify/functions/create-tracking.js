@@ -1,5 +1,12 @@
 const { neon } = require("@netlify/neon");
 
+const headers = {
+  "Content-Type": "application/json",
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
 const ensureTable = async (sql) => {
   await sql`
     CREATE TABLE IF NOT EXISTS trackings (
@@ -14,24 +21,28 @@ const ensureTable = async (sql) => {
 };
 
 exports.handler = async (event) => {
+  if (event.httpMethod === "OPTIONS") {
+    return { statusCode: 200, headers, body: "" };
+  }
+
   if (event.httpMethod !== "POST") {
-    return { statusCode: 405, body: JSON.stringify({ error: "method not allowed" }) };
+    return { statusCode: 405, headers, body: JSON.stringify({ error: "method not allowed" }) };
   }
 
   if (!process.env.NETLIFY_DATABASE_URL) {
-    return { statusCode: 500, body: JSON.stringify({ error: "database not configured" }) };
+    return { statusCode: 500, headers, body: JSON.stringify({ error: "database not configured" }) };
   }
 
   let payload;
   try {
     payload = JSON.parse(event.body || "{}");
   } catch (err) {
-    return { statusCode: 400, body: JSON.stringify({ error: "invalid JSON body" }) };
+    return { statusCode: 400, headers, body: JSON.stringify({ error: "invalid JSON body" }) };
   }
 
   const { token, inventory = [], salesOrders = [], assignments = [] } = payload;
   if (!token) {
-    return { statusCode: 400, body: JSON.stringify({ error: "token is required" }) };
+    return { statusCode: 400, headers, body: JSON.stringify({ error: "token is required" }) };
   }
 
   const sql = neon(process.env.NETLIFY_DATABASE_URL);
@@ -44,17 +55,9 @@ exports.handler = async (event) => {
       ON CONFLICT (tracking_token)
       DO UPDATE SET inventory = EXCLUDED.inventory, sales_orders = EXCLUDED.sales_orders, assignments = EXCLUDED.assignments
     `;
-    return {
-      statusCode: 200,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ok: true }),
-    };
+    return { statusCode: 200, headers, body: JSON.stringify({ ok: true }) };
   } catch (err) {
     console.error("create-tracking error", err);
-    return {
-      statusCode: 500,
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ error: "failed to save tracking" }),
-    };
+    return { statusCode: 500, headers, body: JSON.stringify({ error: "failed to save tracking" }) };
   }
 };
