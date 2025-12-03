@@ -1396,6 +1396,8 @@ function TrackingRouter({ token }: { token: string }) {
   return <ClientTrackingView inventoryRow={invRow} assignments={relatedAssignments} salesOrder={relatedSalesOrder} salesOrders={salesOrders} />;
 }
 
+export { TrackingRouter };
+
 // =====================================================================
 // COMPONENTES AUXILIARES Y DE VISTAS
 // =====================================================================
