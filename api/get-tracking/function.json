@@ -8,7 +8,8 @@
       "methods": [
         "get",
         "options"
-      ]
+      ],
+      "route": "get-tracking"
     },
     {
       "type": "http",
