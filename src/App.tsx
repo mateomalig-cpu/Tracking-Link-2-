@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Search,
@@ -1040,6 +1040,25 @@ export default function App() {
     });
   };
 
+  const persistTrackingSnapshot = useCallback(async () => {
+    if (typeof window === "undefined" || isTrackingRoute) return;
+    const tokens = Array.from(new Set(inventory.map(row => row.trackingToken).filter(Boolean)));
+    if (!tokens.length) return;
+    await Promise.allSettled(
+      tokens.map(token =>
+        fetch("/.netlify/functions/create-tracking", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token, inventory, salesOrders, assignments }),
+        }).catch(() => null)
+      )
+    );
+  }, [assignments, inventory, isTrackingRoute, salesOrders]);
+
+  useEffect(() => {
+    persistTrackingSnapshot();
+  }, [persistTrackingSnapshot]);
+
   const handleDeleteInventory = (rowId: string) => {
     if (!window.confirm("¿Eliminar este lote de inventario?")) return;
     setInventory(prev => {
@@ -1294,19 +1313,61 @@ export default function App() {
 }
 
 function TrackingRouter({ token }: { token: string }) {
-  const [snapshot, setSnapshot] = useState<TrackingSnapshot>(() => loadTrackingSnapshot());
+  const [state, setState] = useState<{ loading: boolean; snapshot?: TrackingSnapshot; notFound?: boolean }>({
+    loading: true,
+  });
 
   useEffect(() => {
-    const reload = () => setSnapshot(loadTrackingSnapshot());
-    window.addEventListener(TRACKING_SYNC_EVENT, reload);
-    window.addEventListener("storage", reload);
-    return () => {
-      window.removeEventListener(TRACKING_SYNC_EVENT, reload);
-      window.removeEventListener("storage", reload);
+    let cancelled = false;
+    const fetchSnapshot = async () => {
+      try {
+        const res = await fetch(`/.netlify/functions/get-tracking?token=${encodeURIComponent(token)}`);
+        if (res.status === 404) {
+          if (!cancelled) setState({ loading: false, notFound: true });
+          return;
+        }
+        if (!res.ok) throw new Error(`Fetch failed with ${res.status}`);
+        const json = await res.json();
+        if (cancelled) return;
+        setState({
+          loading: false,
+          snapshot: {
+            inventory: json.inventory || [],
+            assignments: json.assignments || [],
+            salesOrders: json.sales_orders || json.salesOrders || [],
+          },
+        });
+      } catch {
+        if (!cancelled) setState({ loading: false, notFound: true });
+      }
     };
-  }, []);
+    fetchSnapshot();
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
-  const { inventory, assignments, salesOrders } = snapshot;
+  if (state.loading) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-[#F9F8F6]">
+        <div className="p-8 bg-white shadow-sm rounded-none border-t-4 border-[#FE5000]">
+          <h1 className="text-[#425563] text-xl font-bold font-['Quicksand']">Cargando tracking…</h1>
+        </div>
+      </div>
+    );
+  }
+
+  if (state.notFound || !state.snapshot) {
+    return (
+      <div className="flex items-center justify-center h-screen bg-[#F9F8F6]">
+        <div className="p-8 bg-white shadow-sm rounded-none border-t-4 border-[#FE5000]">
+          <h1 className="text-[#425563] text-xl font-bold font-['Quicksand']">Link no válido</h1>
+        </div>
+      </div>
+    );
+  }
+
+  const { inventory, assignments, salesOrders } = state.snapshot;
   const invRow = inventory.find(i => i.trackingToken === token);
   if (!invRow) {
     return (
