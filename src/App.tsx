@@ -297,7 +297,7 @@ const INVENTORY_LS_KEY = "inventory_v3";
 const ASSIGNMENTS_LS_KEY = "assignments_v3";
 const SALES_ORDERS_LS_KEY = "sales_orders_v1";
 const TRACKING_HISTORY_LS_KEY = "tracking_history_v1";
-const TRACKING_API_BASE = "https://delicate-rabanadas-e376cc.netlify.app/.netlify/functions";
+const TRACKING_API_BASE = "/api";
 
 // =====================================================================
 // CONFIGURACIÓN DE NOTIFICACIONES Y DATOS
