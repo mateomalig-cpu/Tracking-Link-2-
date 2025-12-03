@@ -297,6 +297,7 @@ const INVENTORY_LS_KEY = "inventory_v3";
 const ASSIGNMENTS_LS_KEY = "assignments_v3";
 const SALES_ORDERS_LS_KEY = "sales_orders_v1";
 const TRACKING_HISTORY_LS_KEY = "tracking_history_v1";
+const TRACKING_API_BASE = "https://delicate-rabanadas-e376cc.netlify.app/.netlify/functions";
 
 // =====================================================================
 // CONFIGURACIÓN DE NOTIFICACIONES Y DATOS
@@ -1046,7 +1047,7 @@ export default function App() {
     if (!tokens.length) return;
     await Promise.allSettled(
       tokens.map(token =>
-        fetch("/.netlify/functions/create-tracking", {
+        fetch(`${TRACKING_API_BASE}/create-tracking`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ token, inventory, salesOrders, assignments }),
@@ -1319,14 +1320,14 @@ function TrackingRouter({ token }: { token: string }) {
 
   useEffect(() => {
     let cancelled = false;
-    const fetchSnapshot = async () => {
-      try {
-        const res = await fetch(`/.netlify/functions/get-tracking?token=${encodeURIComponent(token)}`);
-        if (res.status === 404) {
-          if (!cancelled) setState({ loading: false, notFound: true });
-          return;
-        }
-        if (!res.ok) throw new Error(`Fetch failed with ${res.status}`);
+        const fetchSnapshot = async () => {
+          try {
+            const res = await fetch(`${TRACKING_API_BASE}/get-tracking?token=${encodeURIComponent(token)}`);
+            if (res.status === 404) {
+              if (!cancelled) setState({ loading: false, notFound: true });
+              return;
+            }
+            if (!res.ok) throw new Error(`Fetch failed with ${res.status}`);
         const json = await res.json();
         if (cancelled) return;
         setState({
